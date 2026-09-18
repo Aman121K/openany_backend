@@ -224,8 +224,79 @@ app.post("/api/contact", (req, res) => {
   res.json({ success: true });
 });
 
-// Fetch video metadata + available formats using yt-dlp
-app.post("/api/info", (req, res) => {
+const BROWSER_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+};
+
+function metaContent(html, ...properties) {
+  for (const prop of properties) {
+    const re = new RegExp(
+      `<meta[^>]+(?:property|name)=["']${prop}["'][^>]+content=["']([^"']+)["']`,
+      "i"
+    );
+    const match = html.match(re);
+    if (match) return decodeHtmlEntities(match[1]);
+  }
+  return null;
+}
+
+function decodeHtmlEntities(str) {
+  return str
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0*39;|&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+// Best-effort fallback for sites yt-dlp doesn't have a dedicated extractor
+// for: fetch the page HTML and look for a video URL exposed via Open Graph
+// tags, a <video>/<source> element, or a raw .mp4/.m3u8 link in the markup.
+// Works only when the media URL is present in the initial server-rendered
+// HTML — sites that load video via JS after the page loads (many modern
+// apps) won't be found this way.
+async function tryGenericExtract(url) {
+  const res = await fetch(url, { headers: BROWSER_HEADERS, redirect: "follow" });
+  if (!res.ok) return null;
+  const html = await res.text();
+
+  const videoUrl =
+    metaContent(html, "og:video:secure_url", "og:video:url", "og:video", "twitter:player:stream") ||
+    html.match(/<video[^>]+src=["']([^"']+)["']/i)?.[1] ||
+    html.match(/<source[^>]+src=["']([^"']+\.(?:mp4|m3u8)[^"']*)["']/i)?.[1] ||
+    html.match(/https?:\/\/[^"'\s\\]+\.mp4[^"'\s\\]*/i)?.[0];
+
+  if (!videoUrl) return null;
+
+  const title = metaContent(html, "og:title", "twitter:title") || "Downloaded video";
+  const thumbnail = metaContent(html, "og:image", "twitter:image");
+  const resolvedVideoUrl = new URL(decodeHtmlEntities(videoUrl), url).toString();
+
+  return {
+    title,
+    thumbnail,
+    duration: null,
+    uploader: null,
+    extractor: "generic (best-effort)",
+    formats: [
+      {
+        format_id: "generic",
+        ext: resolvedVideoUrl.includes(".m3u8") ? "m3u8" : "mp4",
+        resolution: "original",
+        filesize: null,
+        hasVideo: true,
+        hasAudio: true,
+        directUrl: resolvedVideoUrl,
+      },
+    ],
+  };
+}
+
+// Fetch video metadata + available formats using yt-dlp, with a generic
+// HTML-scraping fallback for platforms yt-dlp doesn't support.
+app.post("/api/info", async (req, res) => {
   const { url } = req.body || {};
   if (!url || !isValidUrl(url)) {
     return res.status(400).json({ error: "Please provide a valid video URL." });
@@ -235,8 +306,14 @@ app.post("/api/info", (req, res) => {
     "yt-dlp",
     ["-j", "--no-playlist", url],
     { maxBuffer: 1024 * 1024 * 20, timeout: 30000 },
-    (err, stdout) => {
+    async (err, stdout) => {
       if (err) {
+        try {
+          const fallback = await tryGenericExtract(url);
+          if (fallback) return res.json(fallback);
+        } catch {
+          // fall through to the error response below
+        }
         return res.status(422).json({
           error: "Could not fetch video info. The link may be private, unsupported, or invalid.",
         });
@@ -271,10 +348,40 @@ app.post("/api/info", (req, res) => {
 });
 
 // Download the video to a temp file, stream it to the browser, then clean up
-app.get("/api/download", (req, res) => {
-  const { url, format_id } = req.query;
+app.get("/api/download", async (req, res) => {
+  const { url, format_id, media_url } = req.query;
   if (!url || !isValidUrl(url)) {
     return res.status(400).json({ error: "Invalid URL." });
+  }
+
+  // Generic fallback: stream the direct media URL we scraped from the page,
+  // rather than invoking yt-dlp (which has no extractor for this site).
+  if (format_id === "generic") {
+    if (!media_url || !isValidUrl(media_url)) {
+      return res.status(400).json({ error: "Missing media URL." });
+    }
+    try {
+      const upstream = await fetch(media_url, { headers: BROWSER_HEADERS });
+      if (!upstream.ok || !upstream.body) {
+        return res.status(422).json({ error: "Could not download this video." });
+      }
+      const ext = String(media_url).includes(".m3u8") ? "m3u8" : "mp4";
+      res.setHeader("Content-Disposition", `attachment; filename="video.${ext}"`);
+      res.setHeader("Content-Type", upstream.headers.get("content-type") || "video/mp4");
+      const contentLength = upstream.headers.get("content-length");
+      if (contentLength) res.setHeader("Content-Length", contentLength);
+
+      const reader = upstream.body;
+      for await (const chunk of reader) {
+        if (!res.write(chunk)) {
+          await new Promise((resolve) => res.once("drain", resolve));
+        }
+      }
+      return res.end();
+    } catch {
+      if (!res.headersSent) return res.status(500).json({ error: "Download failed." });
+      return res.end();
+    }
   }
 
   const jobId = crypto.randomUUID();
