@@ -305,7 +305,7 @@ app.post("/api/info", async (req, res) => {
   execFile(
     "yt-dlp",
     ["-j", "--no-playlist", url],
-    { maxBuffer: 1024 * 1024 * 20, timeout: 30000 },
+    { maxBuffer: 1024 * 1024 * 20, timeout: 90000 },
     async (err, stdout) => {
       if (err) {
         try {
