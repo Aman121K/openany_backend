@@ -21,6 +21,53 @@ function isValidUrl(str) {
   }
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const CONTACT_FILE = path.join(process.cwd(), "contact-submissions.json");
+
+function readSubmissions() {
+  try {
+    return JSON.parse(fs.readFileSync(CONTACT_FILE, "utf-8"));
+  } catch {
+    return [];
+  }
+}
+
+// Receive a contact form submission and store it locally.
+app.post("/api/contact", (req, res) => {
+  const { name, email, message } = req.body || {};
+
+  if (!name || !String(name).trim()) {
+    return res.status(400).json({ error: "Please enter your name." });
+  }
+  if (!email || !EMAIL_RE.test(String(email).trim())) {
+    return res.status(400).json({ error: "Please enter a valid email address." });
+  }
+  if (!message || String(message).trim().length < 10) {
+    return res.status(400).json({ error: "Message should be at least 10 characters." });
+  }
+  if (String(name).length > 200 || String(email).length > 200 || String(message).length > 5000) {
+    return res.status(400).json({ error: "Input is too long." });
+  }
+
+  const entry = {
+    id: crypto.randomUUID(),
+    name: String(name).trim(),
+    email: String(email).trim(),
+    message: String(message).trim(),
+    receivedAt: new Date().toISOString(),
+  };
+
+  try {
+    const submissions = readSubmissions();
+    submissions.push(entry);
+    fs.writeFileSync(CONTACT_FILE, JSON.stringify(submissions, null, 2));
+  } catch {
+    return res.status(500).json({ error: "Could not save your message. Please try again." });
+  }
+
+  res.json({ success: true });
+});
+
 // Fetch video metadata + available formats using yt-dlp
 app.post("/api/info", (req, res) => {
   const { url } = req.body || {};
