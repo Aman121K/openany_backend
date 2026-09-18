@@ -22,9 +22,30 @@ const HISTORY_FILE = path.join(process.cwd(), "history.json");
 // Optional: path to a Netscape-format cookies.txt file (exported from a
 // logged-in browser session) for sites like Instagram/Facebook that block
 // or rate-limit anonymous requests from datacenter IPs more aggressively
-// than from a real logged-in session. Set YTDLP_COOKIES_FILE to enable.
-const COOKIES_FILE = process.env.YTDLP_COOKIES_FILE || path.join(process.cwd(), "cookies.txt");
-const cookiesArgs = () => (fs.existsSync(COOKIES_FILE) ? ["--cookies", COOKIES_FILE] : []);
+// than from a real logged-in session.
+//
+// Checked in order: YTDLP_COOKIES_FILE env var, Render's default Secret
+// Files mount path, then a cookies.txt in the working directory.
+const COOKIES_CANDIDATES = [
+  process.env.YTDLP_COOKIES_FILE,
+  "/etc/secrets/cookies.txt",
+  path.join(process.cwd(), "cookies.txt"),
+].filter(Boolean);
+
+function findCookiesFile() {
+  return COOKIES_CANDIDATES.find((p) => {
+    try {
+      return fs.existsSync(p);
+    } catch {
+      return false;
+    }
+  });
+}
+
+const cookiesArgs = () => {
+  const file = findCookiesFile();
+  return file ? ["--cookies", file] : [];
+};
 
 function readJsonFile(filePath, fallback) {
   try {
