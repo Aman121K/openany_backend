@@ -19,6 +19,13 @@ const JWT_SECRET = process.env.JWT_SECRET || "dev-only-insecure-secret-change-me
 const USERS_FILE = path.join(process.cwd(), "users.json");
 const HISTORY_FILE = path.join(process.cwd(), "history.json");
 
+// Optional: path to a Netscape-format cookies.txt file (exported from a
+// logged-in browser session) for sites like Instagram/Facebook that block
+// or rate-limit anonymous requests from datacenter IPs more aggressively
+// than from a real logged-in session. Set YTDLP_COOKIES_FILE to enable.
+const COOKIES_FILE = process.env.YTDLP_COOKIES_FILE || path.join(process.cwd(), "cookies.txt");
+const cookiesArgs = () => (fs.existsSync(COOKIES_FILE) ? ["--cookies", COOKIES_FILE] : []);
+
 function readJsonFile(filePath, fallback) {
   try {
     return JSON.parse(fs.readFileSync(filePath, "utf-8"));
@@ -304,7 +311,7 @@ app.post("/api/info", async (req, res) => {
 
   execFile(
     "yt-dlp",
-    ["-j", "--no-playlist", url],
+    ["-j", "--no-playlist", ...cookiesArgs(), url],
     { maxBuffer: 1024 * 1024 * 20, timeout: 90000 },
     async (err, stdout) => {
       if (err) {
@@ -393,6 +400,7 @@ app.get("/api/download", async (req, res) => {
     "--no-playlist",
     "--no-part",
     "--merge-output-format", "mp4",
+    ...cookiesArgs(),
   ];
   if (format_id) {
     args.push("-f", `${format_id}+bestaudio/${format_id}/best`);
