@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import rateLimit from "express-rate-limit";
 import { spawn, execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -9,10 +10,38 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
 const app = express();
+app.set("trust proxy", 1); // Render sits behind a proxy; needed for correct client IPs
 app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 5050;
+
+// Video info/download are the expensive, abuse-prone endpoints (spawn
+// yt-dlp, stream large files) — limit per IP. Auth endpoints get a
+// stricter limit to slow down brute-force/spam signups.
+const videoLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests. Please try again in a few minutes." },
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many attempts. Please try again in a few minutes." },
+});
+
+const contactLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many messages sent. Please try again later." },
+});
 
 // In production, set JWT_SECRET as a real environment variable.
 const JWT_SECRET = process.env.JWT_SECRET || "dev-only-insecure-secret-change-me";
@@ -157,7 +186,7 @@ function readSubmissions() {
 
 // ---------- Auth (optional — used only for saving history to an account) ----------
 
-app.post("/api/auth/signup", async (req, res) => {
+app.post("/api/auth/signup", authLimiter, async (req, res) => {
   const { name, email, password } = req.body || {};
 
   if (!name || !String(name).trim()) {
@@ -190,7 +219,7 @@ app.post("/api/auth/signup", async (req, res) => {
   res.json({ token: signToken(user), user: publicUser(user) });
 });
 
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", authLimiter, async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) {
     return res.status(400).json({ error: "Please enter your email and password." });
@@ -250,7 +279,7 @@ app.delete("/api/history", requireAuth, (req, res) => {
 });
 
 // Receive a contact form submission and store it locally.
-app.post("/api/contact", (req, res) => {
+app.post("/api/contact", contactLimiter, (req, res) => {
   const { name, email, message } = req.body || {};
 
   if (!name || !String(name).trim()) {
@@ -357,7 +386,7 @@ async function tryGenericExtract(url) {
 
 // Fetch video metadata + available formats using yt-dlp, with a generic
 // HTML-scraping fallback for platforms yt-dlp doesn't support.
-app.post("/api/info", async (req, res) => {
+app.post("/api/info", videoLimiter, async (req, res) => {
   const { url } = req.body || {};
   if (!url || !isValidUrl(url)) {
     return res.status(400).json({ error: "Please provide a valid video URL." });
@@ -409,7 +438,7 @@ app.post("/api/info", async (req, res) => {
 });
 
 // Download the video to a temp file, stream it to the browser, then clean up
-app.get("/api/download", async (req, res) => {
+app.get("/api/download", videoLimiter, async (req, res) => {
   const { url, format_id, media_url } = req.query;
   if (!url || !isValidUrl(url)) {
     return res.status(400).json({ error: "Invalid URL." });
