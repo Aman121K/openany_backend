@@ -479,6 +479,21 @@ app.get("/api/download", async (req, res) => {
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
+// Temporary diagnostic endpoint — safe to remove later. Reports whether a
+// cookies file was found and basic stats, without exposing its contents.
+app.get("/api/debug-cookies", (_req, res) => {
+  const found = findCookiesFile();
+  const results = COOKIES_CANDIDATES.map((p) => {
+    try {
+      const stat = fs.statSync(p);
+      return { path: p, exists: true, sizeBytes: stat.size };
+    } catch {
+      return { path: p, exists: false };
+    }
+  });
+  res.json({ activeFile: found || null, candidates: results });
+});
+
 app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
 });
