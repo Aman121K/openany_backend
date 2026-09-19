@@ -64,7 +64,18 @@ function ensureWritableCookiesFile() {
   }
 }
 
-const cookiesArgs = () => {
+// Facebook's yt-dlp extractor currently breaks ("Cannot parse data") when
+// a logged-in session (cookies) is used — it works fine anonymously. So we
+// only attach cookies for hosts that actually need them (Instagram).
+const COOKIE_HOSTS = ["instagram.com"];
+
+const cookiesArgs = (targetUrl) => {
+  try {
+    const host = new URL(targetUrl).hostname;
+    if (!COOKIE_HOSTS.some((h) => host.endsWith(h))) return [];
+  } catch {
+    return [];
+  }
   const file = ensureWritableCookiesFile();
   return file ? ["--cookies", file] : [];
 };
@@ -354,9 +365,9 @@ app.post("/api/info", async (req, res) => {
 
   execFile(
     "yt-dlp",
-    ["-j", "--no-playlist", ...cookiesArgs(), url],
+    ["-j", "--no-playlist", ...cookiesArgs(url), url],
     { maxBuffer: 1024 * 1024 * 20, timeout: 90000 },
-    async (err, stdout, stderr) => {
+    async (err, stdout) => {
       if (err) {
         try {
           const fallback = await tryGenericExtract(url);
@@ -366,7 +377,6 @@ app.post("/api/info", async (req, res) => {
         }
         return res.status(422).json({
           error: "Could not fetch video info. The link may be private, unsupported, or invalid.",
-          debug: String(stderr || err.message || "").slice(-800),
         });
       }
       try {
@@ -392,10 +402,7 @@ app.post("/api/info", async (req, res) => {
           formats,
         });
       } catch {
-        res.status(500).json({
-          error: "Failed to parse video info.",
-          debug: String(stdout || "").slice(0, 400) + " ... " + String(stdout || "").slice(-400),
-        });
+        res.status(500).json({ error: "Failed to parse video info." });
       }
     }
   );
@@ -447,7 +454,7 @@ app.get("/api/download", async (req, res) => {
     "--no-playlist",
     "--no-part",
     "--merge-output-format", "mp4",
-    ...cookiesArgs(),
+    ...cookiesArgs(url),
   ];
   if (format_id) {
     args.push("-f", `${format_id}+bestaudio/${format_id}/best`);
