@@ -6,9 +6,10 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends ffmpeg curl ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# Install the yt-dlp standalone binary (bundles its own Python, no
-# separate Python install needed).
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+# Install the yt-dlp_linux standalone binary — this build bundles its own
+# Python interpreter. (The plain "yt-dlp" release asset is a zipapp that
+# needs a python3 executable on PATH, which this base image doesn't have.)
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp
 
 WORKDIR /app
