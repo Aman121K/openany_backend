@@ -173,6 +173,29 @@ function isValidUrl(str) {
   }
 }
 
+// Short-lived in-memory cache for /api/info responses. Two people pasting
+// the same trending link (or one person re-pasting after navigating away)
+// get an instant response instead of re-running yt-dlp from scratch.
+const INFO_CACHE_TTL_MS = 10 * 60 * 1000;
+const infoCache = new Map();
+
+function getCachedInfo(url) {
+  const entry = infoCache.get(url);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    infoCache.delete(url);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCachedInfo(url, data) {
+  infoCache.set(url, { data, expiresAt: Date.now() + INFO_CACHE_TTL_MS });
+  if (infoCache.size > 500) {
+    infoCache.delete(infoCache.keys().next().value);
+  }
+}
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CONTACT_FILE = path.join(process.cwd(), "contact-submissions.json");
 
@@ -392,15 +415,28 @@ app.post("/api/info", videoLimiter, async (req, res) => {
     return res.status(400).json({ error: "Please provide a valid video URL." });
   }
 
+  const cached = getCachedInfo(url);
+  if (cached) return res.json(cached);
+
   execFile(
     "yt-dlp",
-    ["-j", "--no-playlist", ...cookiesArgs(url), url],
+    [
+      "-j",
+      "--no-playlist",
+      "--no-check-formats",
+      "--extractor-args", "youtube:skip=hls,translated_subs;player_skip=webpage",
+      ...cookiesArgs(url),
+      url,
+    ],
     { maxBuffer: 1024 * 1024 * 20, timeout: 90000 },
     async (err, stdout) => {
       if (err) {
         try {
           const fallback = await tryGenericExtract(url);
-          if (fallback) return res.json(fallback);
+          if (fallback) {
+            setCachedInfo(url, fallback);
+            return res.json(fallback);
+          }
         } catch {
           // fall through to the error response below
         }
@@ -422,14 +458,16 @@ app.post("/api/info", videoLimiter, async (req, res) => {
           }))
           .reverse();
 
-        res.json({
+        const result = {
           title: data.title,
           thumbnail: data.thumbnail,
           duration: data.duration,
           uploader: data.uploader,
           extractor: data.extractor,
           formats,
-        });
+        };
+        setCachedInfo(url, result);
+        res.json(result);
       } catch {
         res.status(500).json({ error: "Failed to parse video info." });
       }
