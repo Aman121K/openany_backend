@@ -356,7 +356,7 @@ app.post("/api/info", async (req, res) => {
     "yt-dlp",
     ["-j", "--no-playlist", ...cookiesArgs(), url],
     { maxBuffer: 1024 * 1024 * 20, timeout: 90000 },
-    async (err) => {
+    async (err, stdout) => {
       if (err) {
         try {
           const fallback = await tryGenericExtract(url);
@@ -391,7 +391,10 @@ app.post("/api/info", async (req, res) => {
           formats,
         });
       } catch {
-        res.status(500).json({ error: "Failed to parse video info." });
+        res.status(500).json({
+          error: "Failed to parse video info.",
+          debug: String(stdout || "").slice(0, 400) + " ... " + String(stdout || "").slice(-400),
+        });
       }
     }
   );
