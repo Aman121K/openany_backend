@@ -42,8 +42,30 @@ function findCookiesFile() {
   });
 }
 
+// yt-dlp rewrites the cookies file on exit (to persist refreshed session
+// cookies), so it needs a writable path. Render's Secret Files are mounted
+// read-only, which crashes yt-dlp with an OSError — so we copy the source
+// file to a writable temp path once and always hand that copy to yt-dlp.
+const WRITABLE_COOKIES_FILE = path.join(os.tmpdir(), "yt-dlp-cookies.txt");
+
+function ensureWritableCookiesFile() {
+  const source = findCookiesFile();
+  if (!source) return null;
+  try {
+    if (
+      !fs.existsSync(WRITABLE_COOKIES_FILE) ||
+      fs.statSync(source).mtimeMs > fs.statSync(WRITABLE_COOKIES_FILE).mtimeMs
+    ) {
+      fs.copyFileSync(source, WRITABLE_COOKIES_FILE);
+    }
+    return WRITABLE_COOKIES_FILE;
+  } catch {
+    return source;
+  }
+}
+
 const cookiesArgs = () => {
-  const file = findCookiesFile();
+  const file = ensureWritableCookiesFile();
   return file ? ["--cookies", file] : [];
 };
 
@@ -334,7 +356,7 @@ app.post("/api/info", async (req, res) => {
     "yt-dlp",
     ["-j", "--no-playlist", ...cookiesArgs(), url],
     { maxBuffer: 1024 * 1024 * 20, timeout: 90000 },
-    async (err, stdout, stderr) => {
+    async (err) => {
       if (err) {
         try {
           const fallback = await tryGenericExtract(url);
@@ -344,7 +366,6 @@ app.post("/api/info", async (req, res) => {
         }
         return res.status(422).json({
           error: "Could not fetch video info. The link may be private, unsupported, or invalid.",
-          debug: String(stderr || err.message || "").slice(-800),
         });
       }
       try {
