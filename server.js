@@ -334,7 +334,7 @@ app.post("/api/info", async (req, res) => {
     "yt-dlp",
     ["-j", "--no-playlist", ...cookiesArgs(), url],
     { maxBuffer: 1024 * 1024 * 20, timeout: 90000 },
-    async (err) => {
+    async (err, stdout, stderr) => {
       if (err) {
         try {
           const fallback = await tryGenericExtract(url);
@@ -344,6 +344,7 @@ app.post("/api/info", async (req, res) => {
         }
         return res.status(422).json({
           error: "Could not fetch video info. The link may be private, unsupported, or invalid.",
+          debug: String(stderr || err.message || "").slice(-800),
         });
       }
       try {
