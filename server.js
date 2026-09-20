@@ -475,6 +475,47 @@ app.post("/api/info", videoLimiter, async (req, res) => {
   );
 });
 
+// Proxy-download a YouTube thumbnail image as an attachment. Restricted to
+// YouTube's own image CDN hosts so this can't be used as an open proxy.
+const THUMBNAIL_HOSTS = ["img.youtube.com", "i.ytimg.com"];
+
+app.get("/api/thumbnail-download", videoLimiter, async (req, res) => {
+  const { url } = req.query;
+  if (!url || !isValidUrl(url)) {
+    return res.status(400).json({ error: "Invalid URL." });
+  }
+  let host;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return res.status(400).json({ error: "Invalid URL." });
+  }
+  if (!THUMBNAIL_HOSTS.includes(host)) {
+    return res.status(400).json({ error: "Unsupported image host." });
+  }
+
+  try {
+    const upstream = await fetch(url, { headers: BROWSER_HEADERS });
+    if (!upstream.ok || !upstream.body) {
+      return res.status(422).json({ error: "Could not fetch thumbnail." });
+    }
+    res.setHeader("Content-Disposition", 'attachment; filename="thumbnail.jpg"');
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || "image/jpeg");
+    const contentLength = upstream.headers.get("content-length");
+    if (contentLength) res.setHeader("Content-Length", contentLength);
+
+    for await (const chunk of upstream.body) {
+      if (!res.write(chunk)) {
+        await new Promise((resolve) => res.once("drain", resolve));
+      }
+    }
+    res.end();
+  } catch {
+    if (!res.headersSent) res.status(500).json({ error: "Download failed." });
+    else res.end();
+  }
+});
+
 // Download the video to a temp file, stream it to the browser, then clean up
 app.get("/api/download", videoLimiter, async (req, res) => {
   const { url, format_id, media_url } = req.query;
