@@ -429,7 +429,7 @@ app.post("/api/info", videoLimiter, async (req, res) => {
       url,
     ],
     { maxBuffer: 1024 * 1024 * 20, timeout: 90000 },
-    async (err, stdout) => {
+    async (err, stdout, stderr) => {
       if (err) {
         try {
           const fallback = await tryGenericExtract(url);
@@ -442,6 +442,7 @@ app.post("/api/info", videoLimiter, async (req, res) => {
         }
         return res.status(422).json({
           error: "Could not fetch video info. The link may be private, unsupported, or invalid.",
+          debug: String(stderr || err.message || "").slice(-800),
         });
       }
       try {
