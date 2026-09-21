@@ -95,8 +95,10 @@ function ensureWritableCookiesFile() {
 
 // Facebook's yt-dlp extractor currently breaks ("Cannot parse data") when
 // a logged-in session (cookies) is used — it works fine anonymously. So we
-// only attach cookies for hosts that actually need them (Instagram).
-const COOKIE_HOSTS = ["instagram.com"];
+// only attach cookies for hosts that actually need them: Instagram (avoids
+// being blocked) and YouTube (avoids "Sign in to confirm you're not a bot",
+// which datacenter IPs like Render's trigger more often).
+const COOKIE_HOSTS = ["instagram.com", "youtube.com", "youtu.be"];
 
 const cookiesArgs = (targetUrl) => {
   try {
@@ -429,7 +431,7 @@ app.post("/api/info", videoLimiter, async (req, res) => {
       url,
     ],
     { maxBuffer: 1024 * 1024 * 20, timeout: 90000 },
-    async (err, stdout, stderr) => {
+    async (err, stdout) => {
       if (err) {
         try {
           const fallback = await tryGenericExtract(url);
@@ -442,7 +444,6 @@ app.post("/api/info", videoLimiter, async (req, res) => {
         }
         return res.status(422).json({
           error: "Could not fetch video info. The link may be private, unsupported, or invalid.",
-          debug: String(stderr || err.message || "").slice(-800),
         });
       }
       try {
