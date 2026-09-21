@@ -175,6 +175,37 @@ function isValidUrl(str) {
   }
 }
 
+// Map yt-dlp's raw stderr to a clearer, more specific message for the UI —
+// especially for private/login-gated content, which is a fundamental
+// limitation (not a bug) worth explaining rather than a generic error.
+function friendlyExtractError(rawMessage) {
+  const msg = String(rawMessage || "").toLowerCase();
+
+  if (
+    msg.includes("private") ||
+    msg.includes("login required") ||
+    msg.includes("restricted video") ||
+    msg.includes("this account's posts are private") ||
+    msg.includes("rate-limit reached or login required")
+  ) {
+    return "This looks like a private or restricted account. We can only download publicly available content — please ask the account owner to share the file directly, or follow them and check back if they approve your request.";
+  }
+
+  if (msg.includes("sign in to confirm") || msg.includes("not a bot")) {
+    return "The platform is temporarily blocking automated requests. Please try again in a few minutes.";
+  }
+
+  if (msg.includes("video unavailable") || msg.includes("this video is unavailable")) {
+    return "This video is unavailable — it may have been deleted or taken down by the uploader.";
+  }
+
+  if (msg.includes("age") && (msg.includes("restrict") || msg.includes("confirm"))) {
+    return "This video is age-restricted and can't be downloaded without a signed-in, age-verified session.";
+  }
+
+  return "Could not fetch video info. The link may be private, unsupported, or invalid.";
+}
+
 // Short-lived in-memory cache for /api/info responses. Two people pasting
 // the same trending link (or one person re-pasting after navigating away)
 // get an instant response instead of re-running yt-dlp from scratch.
@@ -431,7 +462,7 @@ app.post("/api/info", videoLimiter, async (req, res) => {
       url,
     ],
     { maxBuffer: 1024 * 1024 * 20, timeout: 90000 },
-    async (err, stdout) => {
+    async (err, stdout, stderr) => {
       if (err) {
         try {
           const fallback = await tryGenericExtract(url);
@@ -443,7 +474,7 @@ app.post("/api/info", videoLimiter, async (req, res) => {
           // fall through to the error response below
         }
         return res.status(422).json({
-          error: "Could not fetch video info. The link may be private, unsupported, or invalid.",
+          error: friendlyExtractError(stderr || err.message),
         });
       }
       try {
